@@ -1,0 +1,225 @@
+---
+title: "Schools should invest teachers into operating more classed rather than aiding existing regular-sized classes."
+author: "Rongwei Xia"
+date: "03/10/2024"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+
+# Abstract
+
+In this report, effects of class size on grade 1 math scores is studied.
+Data source of this report is from the STAR project and raw data is
+obtained from [The Harvard
+Dataverse](https://dataverse.harvard.edu/dataset.xhtml;jsessionid=22a24e3b41a3af0d04b0616f637a?persistentId=hdl%3A1902.1%2F10766&version=&q=&fileTypeGroupFacet=%22Tabular+Data%22&fileAccess=&fileTag=&fileSortField=&fileSortOrder=&tagPresort=false&folderPresort=true)
+A mixed effect model is constructed and two fixed effect models are also provided as comparison. Further investigation show that model fits the data well and preprocess methods are appropriate. Base on the model used, it can be shown that smaller class enhance grade 1 math scores.
+
+# Introduction
+Recent studies have shown that smaller classes or larger teacher-to-student ratio can help improve test scores of students. The data set from the STAR project provides a perfect scope to investigate the effects of class size on test scores. There are multiple test scores in the data set and we focused on the grade 1 math score. To make full use of this data set, necessary data manipulation is conducted and various methods are applied. And they all serve one purpose. Our principle question of interest is whether there is any differences in math scaled scores in 1st grade across class types, and if so, a secondary question of interest is which class type is associated with the highest math scaled scores in 1st grade.
+
+# Background
+The STAR project was conducted in the 1993 in Tennessee, USA where over 7,000 students and almost 80 schools are participated. The data was collected on a consecutive 4-year long window with subjects ranging from demographics, test scores, school & teacher information and other motivation/self-concept variables that may impact study performances. Within the study, teachers and students were randomly assigned to 3 class types: regular(22-25 students), small(13-17 students) and regular-with-aid. All schools must include at least one class of each type to participate. But technically this is not observed due to missing data.
+
+However, the data from the STAR project was collected and analysed at students' level. This may incur colinearity since teachers/classes have a major impact on the test scores and for students in the same class their scores are tend to correlate.
+
+# Initial Report
+In the initial report, the model assumptions are likely to be violated but no further action is taken. To avoid this, model needs to be chosen more carefully before valid conclusions can be drawn.
+
+# Descriptive Analysis
+From the STAR User guide, 1 = Small class, 2 = Regular Class, 3 = Regular with Aid. All data with empty grade 1 scaled math grade `g1tmathss` is dropped. All data are aggregated by grade 1 teacher id `g1tchid` and arithmetic mean is used as aggregated output.
+
+```{r,warning = F,message = F,echo = F}
+library(haven)
+library(dplyr)
+library(ggplot2)
+library(lmtest)
+library(lme4)
+library(car)
+library(multcomp)
+data0 = read_sav('STAR_Students_new.sav')
+# data_tab = read.table('STAR_Students.tab')
+```
+
+```{r,echo = F}
+data0$y = data0$g1tmathss
+data1 = data0[!is.na(data0$y),]
+
+data1 = data1%>%group_by(g1tchid)%>%summarise(y = mean(g1tmathss),schoolid1 = factor(mean(g1schid)),star1 = factor(mean(g1classtype)))
+
+levels(data1$star1) = c('Regular+Aid','Small','Regular')
+```
+
+```{r,fig.width=10,echo = F}
+ggplot(data=data1, aes(x=schoolid1,fill = star1)) + geom_bar() + theme(axis.text.x = element_text(angle = 90))
+```
+Figure above is the count of each class size in each school. From
+the figure above we can see that most school have all three types of
+classes, but some school only offers the regular and small class sizes.
+
+```{r,results = "asis",echo = F}
+ggplot(data=data1, aes(x=star1,y = y)) + geom_boxplot() + labs(y = 'Math Grade',x = 'Class Size')
+```
+
+From the boxplot of math grade by class size we can see the small
+class size group has the best math grade. But the other two size groups
+are similar.
+
+
+```{r,echo = F}
+ind = rank((data1%>%group_by(schoolid1)%>%summarise(y = mean(y)))$y)
+data1$schoolid = factor(-ind[as.numeric(data1$schoolid1)])
+ggplot(data=data1, aes(x=schoolid,y = y)) + geom_boxplot() + labs(y = 'Math Score',x = 'Schoolid')+ theme(axis.text.x = element_text(angle = 90))+ scale_x_discrete(breaks = data1$schoolid,labels = data1$schoolid1)
+```
+
+The figure above shows how math scores varies in different school. The school in the figure are organised in the descending order of average math score. There is a significant difference in math scores among schools.
+
+
+# Inferential analysis 
+
+## Models
+The two-way mixed model is constructed as followed:
+$$
+Y_{ijk} = \mu_{..}+\alpha_i+\beta_j+\epsilon_{ijk}
+\\k = 1,
+\ldots,n_k,i= 1,\ldots,3,j = 1,\ldots,80
+$$
+Where $\alpha$ is the fixed effect for class type and $\beta$ is the random effect for the school $\{\epsilon_{ijk}\} \sim N(0,\sigma^2),i.i.d$, $\{\beta_j\} \sim N(0,\sigma_\beta^2),i.i.d$ and $\{\epsilon_{ijk}\}$ and $\{\beta_j\}$ are mutually independent. $\sum\limits_{i = 1}^3\alpha_i = 0$
+
+## Model Justification
+Since students and teachers are randomly selected, the school they are coming from are also randomly selected. Although we can observe a obvious impact of different school on math scores, they should serve as a random effect that may vary if a different sample is collected. The advantage of random effect is that it has far less parameters to be estimated. There are too many school in the data set so introducing it as the fixed effect will bring too many unnecessary parameters and may overfit the data. Given the fact that it is not the primary variable of interest, introducing it as a random effect will control its effect as a covariate while controlling variance inflation.
+
+However, Introducing it as a random effect requires further normal assumption. We will take a closer look at it in the model diagnostic part.
+
+The model summary of the model above is provided as below: In this model, the school takes $348.5/(348.5+276.8) = 55%$ of the total variance.
+```{r,echo = F}
+mod3 = lmer(y~star1+(1|schoolid1),data1)
+summary(mod3)
+```
+
+## Alternative Models.
+On the other hand, alternative fixed effect models could be constructed as comparison. For this fixed effect model, the interaction effect between class size and school should be considered.
+
+
+```{r,echo = F}
+print('Model1')
+mod1 = aov(y~(star1+schoolid1)^2,data1)
+summary(mod1)
+```
+```{r,echo = F}
+print('Model2')
+mod2 = aov(y~star1+schoolid1,data1)
+summary(mod2)
+```
+
+From the summary tables we can see that the school variable takes up to 75 D.F. and adding interaction term takes a further 146, leaving residual D.F. at only 115. This reduction of D.F. is totally unnecessary since introducing as random effect will take only one more D.F.
+
+F test also suggest interaction may be dropped.
+
+```{r,echo = F,warning = F}
+lrtest(mod1,mod2)
+n = nrow(data1)
+
+data.frame(Model1 = c(AIC(mod1),AIC(mod1,k=log(n))),Model2 = c(AIC(mod2),AIC(mod2,k=log(n))),row.names = c('AIC','BIC'))
+```
+
+Also, we can conduct a Likelihood Ratio Test to see if the interaction term should be kept in the fixed effect models. This time it rejects the null hypothesis and suggest the interaction term should be kept. 
+
+To take model overfitting into consideration, AIC and BIC are calculated. Model2 always has lower values and thus interaction term should be dropped.
+
+Those two fixed effect models may also fit the data well. But due to large number of categories of schools, they do not achieve good bias-variance trade off. Thus, the mixed effect model is better than those two.
+
+## Results
+
+```{r,echo = F}
+mod0 = lmer(y~(1|schoolid1),data1)
+anova(mod3,mod0)
+```
+First, the primary question of interest is examined using the chosen mixed effect model.
+A Likelihood Ratio Test is performed and the null hypothesis is rejected. And adding `star1` also decreases AIC and BIC. This suggests `star1` should be kept in the model. and there are differences in math scaled scores in 1st grade across class types.
+
+```{r,echo = F}
+summary(glht(mod3, linfct = mcp(star1 = "Tukey")), test = adjusted("holm"))
+```
+To exam the secondary question of interest, a Tukey HSD procedure can be implemented. The results show that `Small` size class beats both other sizes but there is no significant difference between `Regular` and `Regular+Aid`.
+
+
+```{r,echo = F}
+tukey=TukeyHSD(mod2)
+round(tukey$star1,3)
+```
+The Tukey HSD result of the alternative fixed effect model is also listed as a comparison. This model shows all three categories are different, which is not the same as we can observe form the simple boxplot.
+
+# Model Diagnostics
+
+```{r,echo = F}
+school = (data1 %>% group_by(schoolid1) %>% summarise(y = mean(y)))$y
+hist(school)
+qqnorm(scale(school))
+abline(a = 0,b = 1)
+shapiro.test(school)
+```
+
+Since `Schoolid` is introduced as random effect, its normality need to be examined carefully. The histogram shows quite similar to a normal distribution, except from that the data is somehow right_skewed. The qq-norm shows very good approximation of normal quantiles. And the shapiro test fail to reject the null hypothesis that the distribution is normal.
+
+Overall speaking, there is high probability that the normal assumption can be held.
+
+```{r,echo = F}
+plot(mod3)
+leveneTest(residuals(mod3),data1$star1)
+```
+
+The model variance is also tested. From the residual plot we can observe a flat and evenly distributed pattern. Although Levene test rejects the null hypothesis of equal varaince at a p value of 0.03. This implies there may be minor heteroscedasticity but the extend to which model assumptions are violated are mild.
+
+# Sensitivity Analysis
+```{r,echo = F}
+data2 = data0[!is.na(data0$y),]
+
+data2 = data2%>%group_by(g1tchid)%>%summarise(y = median(g1tmathss),schoolid1 = factor(mean(g1schid)),star1 = factor(mean(g1classtype)))
+levels(data2$star1) = c('Regular','Small','Regular+Aid')
+
+mod4 = lmer(y~star1+(1|schoolid1),data2)
+summary(mod4)
+summary(glht(mod4, linfct = mcp(star1 = "Tukey")), test = adjusted("holm"))
+```
+
+In the data preprocessing part, arithmetic mean is used as the aggregate output for each class. To test sensitivity, median is used in stead and the same model is fitted. Comparing to the original model, this new model is quite similar, and all major conclusions still hold. Thus, the methods and approaches used in the report are robust.
+
+
+# Discussion and Conclusions
+Based on the STAR data set, a mixed model with class type as fixed effect and school as random effect is constructed. And from the model there is a significant difference among different class types, controlling the effects different school may have on the math scores. Also, smaller classes are of irreplaceable importance in helping grade 1 students improving math scores. This also indicates schools should invest teachers into operating more classed rather than aiding existing regular-sized classes.
+
+
+# Acknowledgement {.unnumbered}
+
+[ By default, it is assumed that you have discussed this project with
+instructors. List any other people that you have discussed this project
+with. ]{style="color:blue"}
+
+# Reference {.unnumbered}
+
+[ List any references you cited in the report. See
+[here](https://owl.purdue.edu/owl/research_and_citation/apa_style/apa_formatting_and_style_guide/in_text_citations_the_basics.html)
+for the APA format, as an example: ]{style="color:blue"}
+
+Imbens, G., & Rubin, D. (2015). Stratified Randomized Experiments. In
+Causal Inference for Statistics, Social, and Biomedical Sciences: An
+Introduction (pp. 187-218). Cambridge: Cambridge University Press.
+<doi:10.1017/CBO9781139025751.010>
+
+# Session info {.unnumbered}
+
+[ Report information of your `R` session for reproducibility.
+]{style="color:blue"}
+
+```{r}
+sessionInfo()
+```
